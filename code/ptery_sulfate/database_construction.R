@@ -1,17 +1,4 @@
----
-title: "assignment_06"
-author: "Katy Gardner"
-date: "3/9/2021"
-output: html_document
----
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
-
-# Assignment 06: Building my SQLite database
-
-```{r, warning=FALSE, message=FALSE}
+#build RSQlite database
 
 #load packages
 library(DBI)
@@ -21,37 +8,21 @@ library(tidyverse)
 library(lessR)
 library(tibble)
 
-```
-
-For my project, I have 4 main .csv files that I want to incorporate into one database. The files pertain to two main entities: the tanks and the bugs. Tanks contain bugs in certain treatment conditions (temperature and added sulfate). There are 3 sampling processes going on: tanks, bugs, and chemical analyses. Chemical analyses are conducted prior to the start of the experiment and at the end of the experiment. Tanks are measured approximately twice a week (with some variability) for dissolved oxygen, conductivity, and temperature levels as a sort of maintenance measurement. The number of bugs alive per tank is measured once a week and recorded as that tank's survival. Finally, bugs are measured once every two weeks for head capsule width, which can then be converted to a specific growth measurement. The database structure I intend to follow is displayed below.
-
-```{r image, echo = FALSE, fig.align = "center", fig.cap="Database structure. Italics denote primary key, bold denotes foreign keys.", out.width='100%'}
-knitr::include_graphics("../../assignment4.jpg")
-```
 
 ### Creating the database
 
-First, I will create a database connection in the "project" folder of my Reproducible Science class folder.
-```{r}
-
 #establish a database connection
 ptery_sulf_db <- dbConnect(drv = RSQLite::SQLite(), 
-                        "../../project/ptery_sulf.db")
+                        "../../raw_data/ptery_sulf.db")
 
-```
-
-Next, I want to load in all of the .csv files I intend to add to the database. I'll start with USUAL water measurement data.
-```{r}
-
-USUAL_start <- read.csv("../../../../Research/experiments/sulfate/pteronarcys/raw_data/2020-07_USUAL_results.csv")
-USUAL_end <- read.csv("../../../../Research/experiments/sulfate/pteronarcys/raw_data/2021-01_USUAL_results.csv")
+#load in USUAL .csv files
+USUAL_start <- read.csv("../../raw_data/2020-07_USUAL_results.csv")
+USUAL_end <- read.csv("../../raw_data/2021-01_USUAL_results.csv")
 #original USUAL docs had "<" when measurement values were below detection limits (typically <0.001)
 #I replaced "<" with empty cells for R purposes. Not sure if empty/blank cells are more appropriate than 0's?
-```
 
-We want to combine these two USUAL .csv files into one for the database. Some cleaning needs to be done before merging the two files. Additionally, carbonate and bicarbonate were only measured in the second round of tests ("end"), so these columns will need to be added to the first document.
 
-```{r}
+#combine USUAL files for database and clean data
 USUAL_start <- USUAL_start %>%
   rename(USU_ID = ï..USU_ID,
          Sulfate = Sulfate.Sulfur,
@@ -78,12 +49,8 @@ USUAL_start[, empty_cols] <- NA
 #merge files vertically
 usual <- Merge(USUAL_start, USUAL_end, by="rows")
 
-```
-
-Let's add the USUAL dataframe into our database.
-
-```{r}
-#write table in database
+# add the USUAL dataframe into our database.
+# write table in database
 dbExecute(ptery_sulf_db, "CREATE TABLE usual (
           USU_ID float NOT NULL PRIMARY KEY,
           date text,
@@ -118,30 +85,17 @@ dbExecute(ptery_sulf_db, "CREATE TABLE usual (
           bicarbonate float);")
 
 dbWriteTable(ptery_sulf_db, "usual", usual, append = TRUE)
-```
 
-With the table added, let's check to see that it worked before moving on to the other 3 tables.
-
-```{r}
-
+# check to see that it worked before moving on to the other 3 tables.
 dbListTables(ptery_sulf_db) 
 dbGetQuery(ptery_sulf_db, "SELECT * FROM usual LIMIT 10;")
 
-```
+#add other .csv files
+surv_wide <- read.csv("../../raw_data/weekly_survival.csv")
 
-Sweet! It worked! Adding the other .csv files below.
-
-```{r}
-survival.wide <- read.csv("../../../../Research/experiments/sulfate/pteronarcys/raw_data/weekly_survival.csv")
-
-#this file is in wide form, let's switch it to a more r-friendly long-form
-
-survival <- gather(survival.wide, sdate, survival, na.rm = F, X28.Jul:X28.Dec)
-
-
-
+#recode to r-friendly format
+survival <- gather(surv_wide, sdate, survival, na.rm = F, X28.Jul:X28.Dec)
 survival$Sulfate.mg.L <- as.character(survival$Sulfate.mg.L)
-
 survival <- survival %>%
   mutate(sdate2 = dplyr::recode(sdate,                     # note use of dplyr::
                                 X28.Jul  = "2020-07-28",
@@ -169,7 +123,7 @@ survival <- survival %>%
                                 X28.Dec = "2020-12-28"))
 
 
-with(survival, table(sdate2, sdate)) # a check to make sure therer are 36 values at each old date and recoded date
+with(survival, table(sdate2, sdate)) #check to make sure therer are 36 values at each old date and recoded date
 
 survival <- survival %>%
   rename(sulfate_trtment = Sulfate.mg.L,
@@ -178,15 +132,10 @@ survival <- survival %>%
          tank = Tank) #renaming columns that imported into R poorly
 
 survival <- survival[,c(2:4,6:7)]
-
 survival$survival_ID <- 1:nrow(survival) #add a serial no. column to act as unique primary key
-
 survival <- survival[, c("survival_ID", "date", "tank", "set_temp", "sulfate_trtment", "survival")] #reordering columns
 
-```
-
-Write the survival table into database.
-```{r}
+# Write the survival table into database.
 dbExecute(ptery_sulf_db, "CREATE TABLE survival (
           survival_ID integer NOT NULL PRIMARY KEY,
           date text,
@@ -200,51 +149,42 @@ dbWriteTable(ptery_sulf_db, "survival", survival, append = TRUE)
 dbListTables(ptery_sulf_db) 
 dbGetQuery(ptery_sulf_db, "SELECT * FROM survival LIMIT 10;")
 
-```
 
-Add weekly water measurement data. NOTE: This data has not all been entered yet, so this data file is really incomplete. Will need to go back and re-add to database when all data has been entered.
+#add weekly water measurement data. 
+## NOTE: This data has not all been entered yet, so this data file is really incomplete. 
+## Will need to go back and re-add to database when all data has been entered
 
-```{r}
-
-water_meas <- read.csv("../../../../Research/experiments/sulfate/pteronarcys/raw_data/weekly_water_measurements.csv")
+#water_meas <- read.csv("../../../../Research/experiments/sulfate/pteronarcys/raw_data/weekly_water_measurements.csv")
 
 #rename some columns
-water_meas <- water_meas %>%
-  rename(date = ï..DATE,
-         measured_temp = TEMP..C.,
-         DO_percent = DO.,
-         DO_mgL = DO..mg.L.,
-         conductivity = CONDUCTIVITY,
-         tank = TANK)
+#water_meas <- water_meas %>%
+#  rename(date = ï..DATE,
+#         measured_temp = TEMP..C.,
+#         DO_percent = DO.,
+#         DO_mgL = DO..mg.L.,
+#         conductivity = CONDUCTIVITY,
+#         tank = TANK)
 
 #add a serial no. column to act as unique primary key, put it as first column
-water_meas <- add_column(water_meas, water_ID = 1:nrow(water_meas), .after = 0)
+#water_meas <- add_column(water_meas, water_ID = 1:nrow(water_meas), .after = 0)
 
-```
+# create water_measures table in SQLite.
+# dbExecute(ptery_sulf_db, "CREATE TABLE water_measures (
+#          water_ID integer NOT NULL PRIMARY KEY,
+#          date text,
+#          tank integer,
+#          measured_temp float,
+#         DO_percent float,
+# DO_mgL float,
+# conductivity integer,
+# FOREIGN KEY(tank) REFERENCES survival(tank));")
 
-Create water_measures table in SQLite.
+# dbWriteTable(ptery_sulf_db, "water_measures", water_meas, append = TRUE)
+# dbListTables(ptery_sulf_db) 
+# dbGetQuery(ptery_sulf_db, "SELECT * FROM water_measures LIMIT 10;")
 
-```{r}
-dbExecute(ptery_sulf_db, "CREATE TABLE water_measures (
-          water_ID integer NOT NULL PRIMARY KEY,
-          date text,
-          tank integer,
-          measured_temp float,
-          DO_percent float, 
-          DO_mgL float,
-          conductivity integer,
-          FOREIGN KEY(tank) REFERENCES survival(tank));")
-
-dbWriteTable(ptery_sulf_db, "water_measures", water_meas, append = TRUE)
-dbListTables(ptery_sulf_db) 
-dbGetQuery(ptery_sulf_db, "SELECT * FROM water_measures LIMIT 10;")
-
-```
-
-Import head width data.
-
-```{r}
-head_width <- read.csv("../../../../Research/experiments/sulfate/pteronarcys/raw_data/head-width_measurements.csv")
+# import head width data.
+head_width <- read.csv("../../raw_data/head-width_measurements.csv")
 
 #rename some columns
 head_width <- head_width %>%
@@ -260,11 +200,8 @@ head_width <- add_column(head_width, meas_ID = 1:nrow(head_width), .after = 0)
 
 #eliminate the "ZOOM" and "MICROMETER UNITS" columns (not needed for db)
 head_width <- head_width[,c(1:4, 6:7,10)]
-```
 
-Create head_width table in SQLite.
-
-```{r}
+# create head_width table in SQLite.
 dbExecute(ptery_sulf_db, "CREATE TABLE head_width (
           meas_ID integer NOT NULL PRIMARY KEY,
           week integer,
@@ -278,5 +215,3 @@ dbExecute(ptery_sulf_db, "CREATE TABLE head_width (
 dbWriteTable(ptery_sulf_db, "head_width", head_width, append = TRUE)
 dbListTables(ptery_sulf_db) 
 dbGetQuery(ptery_sulf_db, "SELECT * FROM head_width LIMIT 10;")
-
-```
